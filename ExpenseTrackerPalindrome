@@ -1,0 +1,236 @@
+import java.sql.; import java.util.; import java.io.; import org.apache.poi.ss.usermodel.; import org.apache.poi.xssf.usermodel.XSSFWorkbook; import javax.xml.parsers.; import javax.xml.transform.; import javax.xml.transform.dom.DOMSource; import javax.xml.transform.stream.StreamResult; import org.w3c.dom.*; import com.google.gson.Gson; import com.google.gson.reflect.TypeToken;
+
+public class ExpenseTracker { static final String DB_URL = "jdbc:sqlite:expenses.db";
+
+public static void main(String[] args) {
+    createExpenseTable();
+    Scanner scanner = new Scanner(System.in);
+    while (true) {
+        System.out.println("\n--- Expense Tracker & Palindrome Checker ---");
+        System.out.println("1. Check Palindrome");
+        System.out.println("2. Add Expense");
+        System.out.println("3. View Expenses");
+        System.out.println("4. Edit Expense");
+        System.out.println("5. Delete Expense");
+        System.out.println("6. Export to Excel");
+        System.out.println("7. Export to JSON");
+        System.out.println("8. Export to XML");
+        System.out.println("9. Exit");
+        System.out.print("Choose an option: ");
+
+        int choice = Integer.parseInt(scanner.nextLine());
+        switch (choice) {
+            case 1: checkPalindrome(scanner); break;
+            case 2: addExpense(scanner); break;
+            case 3: viewExpenses(); break;
+            case 4: editExpense(scanner); break;
+            case 5: deleteExpense(scanner); break;
+            case 6: exportToExcel(); break;
+            case 7: exportToJSON(); break;
+            case 8: exportToXML(); break;
+            case 9: System.exit(0);
+            default: System.out.println("Invalid choice");
+        }
+    }
+}
+
+static void checkPalindrome(Scanner scanner) {
+    System.out.print("Enter a string: ");
+    String input = scanner.nextLine().replaceAll("[^a-zA-Z0-9]", "").toLowerCase();
+    String reversed = new StringBuilder(input).reverse().toString();
+    System.out.println(input.equals(reversed) ? "It is a palindrome." : "It is not a palindrome.");
+}
+
+static void createExpenseTable() {
+    try (Connection conn = DriverManager.getConnection(DB_URL)) {
+        String sql = "CREATE TABLE IF NOT EXISTS expenses (id INTEGER PRIMARY KEY AUTOINCREMENT, amount REAL, category TEXT, date TEXT, description TEXT)";
+        conn.createStatement().execute(sql);
+    } catch (SQLException e) {
+        e.printStackTrace();
+    }
+}
+
+static void addExpense(Scanner scanner) {
+    try (Connection conn = DriverManager.getConnection(DB_URL)) {
+        System.out.print("Amount: ");
+        double amount = Double.parseDouble(scanner.nextLine());
+        System.out.print("Category: ");
+        String category = scanner.nextLine();
+        System.out.print("Date (YYYY-MM-DD): ");
+        String date = scanner.nextLine();
+        System.out.print("Description: ");
+        String desc = scanner.nextLine();
+
+        String sql = "INSERT INTO expenses (amount, category, date, description) VALUES (?, ?, ?, ?)";
+        PreparedStatement pstmt = conn.prepareStatement(sql);
+        pstmt.setDouble(1, amount);
+        pstmt.setString(2, category);
+        pstmt.setString(3, date);
+        pstmt.setString(4, desc);
+        pstmt.executeUpdate();
+        System.out.println("Expense added.");
+    } catch (Exception e) {
+        e.printStackTrace();
+    }
+}
+
+static void viewExpenses() {
+    try (Connection conn = DriverManager.getConnection(DB_URL)) {
+        ResultSet rs = conn.createStatement().executeQuery("SELECT * FROM expenses");
+        while (rs.next()) {
+            System.out.printf("ID: %d | Amount: %.2f | Category: %s | Date: %s | Description: %s\n",
+                rs.getInt("id"), rs.getDouble("amount"), rs.getString("category"),
+                rs.getString("date"), rs.getString("description"));
+        }
+    } catch (SQLException e) {
+        e.printStackTrace();
+    }
+}
+
+static void editExpense(Scanner scanner) {
+    try (Connection conn = DriverManager.getConnection(DB_URL)) {
+        System.out.print("Enter ID of expense to edit: ");
+        int id = Integer.parseInt(scanner.nextLine());
+        System.out.print("New amount: ");
+        double amount = Double.parseDouble(scanner.nextLine());
+        System.out.print("New category: ");
+        String category = scanner.nextLine();
+        System.out.print("New date: ");
+        String date = scanner.nextLine();
+        System.out.print("New description: ");
+        String desc = scanner.nextLine();
+
+        String sql = "UPDATE expenses SET amount=?, category=?, date=?, description=? WHERE id=?";
+        PreparedStatement pstmt = conn.prepareStatement(sql);
+        pstmt.setDouble(1, amount);
+        pstmt.setString(2, category);
+        pstmt.setString(3, date);
+        pstmt.setString(4, desc);
+        pstmt.setInt(5, id);
+        pstmt.executeUpdate();
+        System.out.println("Expense updated.");
+    } catch (Exception e) {
+        e.printStackTrace();
+    }
+}
+
+static void deleteExpense(Scanner scanner) {
+    try (Connection conn = DriverManager.getConnection(DB_URL)) {
+        System.out.print("Enter ID to delete: ");
+        int id = Integer.parseInt(scanner.nextLine());
+        String sql = "DELETE FROM expenses WHERE id=?";
+        PreparedStatement pstmt = conn.prepareStatement(sql);
+        pstmt.setInt(1, id);
+        pstmt.executeUpdate();
+        System.out.println("Expense deleted.");
+    } catch (SQLException e) {
+        e.printStackTrace();
+    }
+}
+
+static void exportToExcel() {
+    try (Connection conn = DriverManager.getConnection(DB_URL);
+         ResultSet rs = conn.createStatement().executeQuery("SELECT * FROM expenses")) {
+
+        Workbook workbook = new XSSFWorkbook();
+        Sheet sheet = workbook.createSheet("Expenses");
+        Row header = sheet.createRow(0);
+        String[] headers = {"ID", "Amount", "Category", "Date", "Description"};
+        for (int i = 0; i < headers.length; i++) header.createCell(i).setCellValue(headers[i]);
+
+        int rowIdx = 1;
+        while (rs.next()) {
+            Row row = sheet.createRow(rowIdx++);
+            row.createCell(0).setCellValue(rs.getInt("id"));
+            row.createCell(1).setCellValue(rs.getDouble("amount"));
+            row.createCell(2).setCellValue(rs.getString("category"));
+            row.createCell(3).setCellValue(rs.getString("date"));
+            row.createCell(4).setCellValue(rs.getString("description"));
+        }
+
+        FileOutputStream fileOut = new FileOutputStream("expenses.xlsx");
+        workbook.write(fileOut);
+        fileOut.close();
+        workbook.close();
+        System.out.println("Exported to expenses.xlsx");
+    } catch (Exception e) {
+        e.printStackTrace();
+    }
+}
+
+static void exportToJSON() {
+    try (Connection conn = DriverManager.getConnection(DB_URL);
+         ResultSet rs = conn.createStatement().executeQuery("SELECT * FROM expenses")) {
+
+        List<Map<String, Object>> list = new ArrayList<>();
+        while (rs.next()) {
+            Map<String, Object> map = new HashMap<>();
+            map.put("id", rs.getInt("id"));
+            map.put("amount", rs.getDouble("amount"));
+            map.put("category", rs.getString("category"));
+            map.put("date", rs.getString("date"));
+            map.put("description", rs.getString("description"));
+            list.add(map);
+        }
+
+        String json = new Gson().toJson(list);
+        FileWriter writer = new FileWriter("expenses.json");
+        writer.write(json);
+        writer.close();
+        System.out.println("Exported to expenses.json");
+    } catch (Exception e) {
+        e.printStackTrace();
+    }
+}
+
+static void exportToXML() {
+    try (Connection conn = DriverManager.getConnection(DB_URL);
+         ResultSet rs = conn.createStatement().executeQuery("SELECT * FROM expenses")) {
+
+        DocumentBuilderFactory dbFactory = DocumentBuilderFactory.newInstance();
+        DocumentBuilder dBuilder = dbFactory.newDocumentBuilder();
+        Document doc = dBuilder.newDocument();
+        Element root = doc.createElement("expenses");
+        doc.appendChild(root);
+
+        while (rs.next()) {
+            Element expense = doc.createElement("expense");
+
+            Element id = doc.createElement("id");
+            id.appendChild(doc.createTextNode(String.valueOf(rs.getInt("id"))));
+            expense.appendChild(id);
+
+            Element amount = doc.createElement("amount");
+            amount.appendChild(doc.createTextNode(String.valueOf(rs.getDouble("amount"))));
+            expense.appendChild(amount);
+
+            Element category = doc.createElement("category");
+            category.appendChild(doc.createTextNode(rs.getString("category")));
+            expense.appendChild(category);
+
+            Element date = doc.createElement("date");
+            date.appendChild(doc.createTextNode(rs.getString("date")));
+            expense.appendChild(date);
+
+            Element description = doc.createElement("description");
+            description.appendChild(doc.createTextNode(rs.getString("description")));
+            expense.appendChild(description);
+
+            root.appendChild(expense);
+        }
+
+        TransformerFactory tf = TransformerFactory.newInstance();
+        Transformer transformer = tf.newTransformer();
+        transformer.setOutputProperty(OutputKeys.INDENT, "yes");
+        DOMSource source = new DOMSource(doc);
+        StreamResult result = new StreamResult(new File("expenses.xml"));
+        transformer.transform(source, result);
+
+        System.out.println("Exported to expenses.xml");
+    } catch (Exception e) {
+        e.printStackTrace();
+    }
+}
+
+}
+
