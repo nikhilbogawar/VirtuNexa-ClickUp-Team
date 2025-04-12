@@ -1,0 +1,468 @@
+import java.util.*;
+import java.util.Date;
+import java.sql.*;
+import java.text.SimpleDateFormat;
+
+public class BankingApplication {
+    private static Connection connection;
+    private static Scanner scanner = new Scanner(System.in);
+    private static SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+    private static int currentUserId = -1;
+
+    public static void main(String[] args) {
+        initializeDatabase();
+        showMainMenu();
+    }
+
+    private static void initializeDatabase() {
+        try {
+            Class.forName("org.sqlite.JDBC");
+            connection = DriverManager.getConnection("jdbc:sqlite:banking.db");
+            
+            // Create tables if they don't exist
+            Statement statement = connection.createStatement();
+            statement.executeUpdate("CREATE TABLE IF NOT EXISTS users (" +
+                    "id INTEGER PRIMARY KEY AUTOINCREMENT, " +
+                    "username TEXT UNIQUE NOT NULL, " +
+                    "password TEXT NOT NULL, " +
+                    "balance REAL DEFAULT 0)");
+            
+            statement.executeUpdate("CREATE TABLE IF NOT EXISTS transactions (" +
+                    "id INTEGER PRIMARY KEY AUTOINCREMENT, " +
+                    "user_id INTEGER NOT NULL, " +
+                    "amount REAL NOT NULL, " +
+                    "type TEXT NOT NULL, " +
+                    "category TEXT, " +
+                    "description TEXT, " +
+                    "date TEXT NOT NULL, " +
+                    "FOREIGN KEY(user_id) REFERENCES users(id))");
+            
+            statement.close();
+        } catch (Exception e) {
+            System.err.println("Database initialization failed: " + e.getMessage());
+            System.exit(1);
+        }
+    }
+
+    private static void showMainMenu() {
+        while (true) {
+            System.out.println("\n=== Banking Application ===");
+            if (currentUserId == -1) {
+                System.out.println("1. Login");
+                System.out.println("2. Create Account");
+            } else {
+                System.out.println("3. Check Balance");
+                System.out.println("4. Deposit");
+                System.out.println("5. Withdraw");
+                System.out.println("6. Add Expense");
+                System.out.println("7. View Transactions");
+                System.out.println("8. Generate Report");
+                System.out.println("9. Logout");
+            }
+            System.out.println("0. Exit");
+            System.out.print("Enter your choice: ");
+
+            try {
+                int choice = Integer.parseInt(scanner.nextLine());
+                
+                if (currentUserId == -1) {
+                    switch (choice) {
+                        case 1: login(); break;
+                        case 2: createAccount(); break;
+                        case 0: exitApplication(); return;
+                        default: System.out.println("Invalid choice. Please try again.");
+                    }
+                } else {
+                    switch (choice) {
+                        case 3: checkBalance(); break;
+                        case 4: deposit(); break;
+                        case 5: withdraw(); break;
+                        case 6: addExpense(); break;
+                        case 7: viewTransactions(); break;
+                        case 8: generateReport(); break;
+                        case 9: logout(); break;
+                        case 0: exitApplication(); return;
+                        default: System.out.println("Invalid choice. Please try again.");
+                    }
+                }
+            } catch (NumberFormatException e) {
+                System.out.println("Please enter a valid number.");
+            }
+        }
+    }
+
+    private static void login() {
+        System.out.print("Enter username: ");
+        String username = scanner.nextLine();
+        System.out.print("Enter password: ");
+        String password = scanner.nextLine();
+
+        try {
+            PreparedStatement statement = connection.prepareStatement(
+                    "SELECT id FROM users WHERE username = ? AND password = ?");
+            statement.setString(1, username);
+            statement.setString(2, password);
+            ResultSet rs = statement.executeQuery();
+
+            if (rs.next()) {
+                currentUserId = rs.getInt("id");
+                System.out.println("Login successful!");
+            } else {
+                System.out.println("Invalid username or password.");
+            }
+            rs.close();
+            statement.close();
+        } catch (SQLException e) {
+            System.out.println("Login failed: " + e.getMessage());
+        }
+    }
+
+    private static void createAccount() {
+        System.out.print("Enter new username: ");
+        String username = scanner.nextLine();
+        System.out.print("Enter new password: ");
+        String password = scanner.nextLine();
+
+        try {
+            PreparedStatement statement = connection.prepareStatement(
+                    "INSERT INTO users(username, password) VALUES(?, ?)");
+            statement.setString(1, username);
+            statement.setString(2, password);
+            statement.executeUpdate();
+            statement.close();
+            System.out.println("Account created successfully!");
+        } catch (SQLException e) {
+            System.out.println("Account creation failed: " + e.getMessage());
+        }
+    }
+
+    private static void checkBalance() {
+        try {
+            PreparedStatement statement = connection.prepareStatement(
+                    "SELECT balance FROM users WHERE id = ?");
+            statement.setInt(1, currentUserId);
+            ResultSet rs = statement.executeQuery();
+
+            if (rs.next()) {
+                double balance = rs.getDouble("balance");
+                System.out.printf("Your current balance is: $%.2f\n", balance);
+            }
+            rs.close();
+            statement.close();
+        } catch (SQLException e) {
+            System.out.println("Failed to check balance: " + e.getMessage());
+        }
+    }
+
+    private static void deposit() {
+        System.out.print("Enter amount to deposit: ");
+        try {
+            double amount = Double.parseDouble(scanner.nextLine());
+            if (amount <= 0) {
+                System.out.println("Amount must be positive.");
+                return;
+            }
+
+            // Update balance
+            PreparedStatement updateStmt = connection.prepareStatement(
+                    "UPDATE users SET balance = balance + ? WHERE id = ?");
+            updateStmt.setDouble(1, amount);
+            updateStmt.setInt(2, currentUserId);
+            updateStmt.executeUpdate();
+            updateStmt.close();
+
+            // Record transaction
+            recordTransaction(amount, "DEPOSIT", "Income", "Account deposit");
+
+            System.out.printf("Successfully deposited $%.2f\n", amount);
+        } catch (NumberFormatException e) {
+            System.out.println("Please enter a valid number.");
+        } catch (SQLException e) {
+            System.out.println("Deposit failed: " + e.getMessage());
+        }
+    }
+
+    private static void withdraw() {
+        System.out.print("Enter amount to withdraw: ");
+        try {
+            double amount = Double.parseDouble(scanner.nextLine());
+            if (amount <= 0) {
+                System.out.println("Amount must be positive.");
+                return;
+            }
+
+            // Check balance first
+            PreparedStatement checkStmt = connection.prepareStatement(
+                    "SELECT balance FROM users WHERE id = ?");
+            checkStmt.setInt(1, currentUserId);
+            ResultSet rs = checkStmt.executeQuery();
+            
+            if (rs.next()) {
+                double balance = rs.getDouble("balance");
+                if (balance < amount) {
+                    System.out.println("Insufficient funds.");
+                    return;
+                }
+            }
+            rs.close();
+            checkStmt.close();
+
+            // Update balance
+            PreparedStatement updateStmt = connection.prepareStatement(
+                    "UPDATE users SET balance = balance - ? WHERE id = ?");
+            updateStmt.setDouble(1, amount);
+            updateStmt.setInt(2, currentUserId);
+            updateStmt.executeUpdate();
+            updateStmt.close();
+
+            // Record transaction
+            recordTransaction(amount, "WITHDRAWAL", "Withdrawal", "Cash withdrawal");
+
+            System.out.printf("Successfully withdrew $%.2f\n", amount);
+        } catch (NumberFormatException e) {
+            System.out.println("Please enter a valid number.");
+        } catch (SQLException e) {
+            System.out.println("Withdrawal failed: " + e.getMessage());
+        }
+    }
+
+    private static void addExpense() {
+        System.out.print("Enter expense amount: ");
+        try {
+            double amount = Double.parseDouble(scanner.nextLine());
+            if (amount <= 0) {
+                System.out.println("Amount must be positive.");
+                return;
+            }
+
+            System.out.print("Enter expense category: ");
+            String category = scanner.nextLine();
+            System.out.print("Enter expense description: ");
+            String description = scanner.nextLine();
+
+            // Check balance first
+            PreparedStatement checkStmt = connection.prepareStatement(
+                    "SELECT balance FROM users WHERE id = ?");
+            checkStmt.setInt(1, currentUserId);
+            ResultSet rs = checkStmt.executeQuery();
+            
+            if (rs.next()) {
+                double balance = rs.getDouble("balance");
+                if (balance < amount) {
+                    System.out.println("Insufficient funds for this expense.");
+                    return;
+                }
+            }
+            rs.close();
+            checkStmt.close();
+
+            // Update balance
+            PreparedStatement updateStmt = connection.prepareStatement(
+                    "UPDATE users SET balance = balance - ? WHERE id = ?");
+            updateStmt.setDouble(1, amount);
+            updateStmt.setInt(2, currentUserId);
+            updateStmt.executeUpdate();
+            updateStmt.close();
+
+            // Record transaction
+            recordTransaction(amount, "EXPENSE", category, description);
+
+            System.out.println("Expense recorded successfully!");
+        } catch (NumberFormatException e) {
+            System.out.println("Please enter a valid number.");
+        } catch (SQLException e) {
+            System.out.println("Failed to add expense: " + e.getMessage());
+        }
+    }
+
+    /**
+     * @param amount
+     * @param type
+     * @param category
+     * @param description
+     * @throws SQLException
+     */
+    private static void recordTransaction(double amount, String type, String category, String description) 
+            throws SQLException {
+        PreparedStatement statement = connection.prepareStatement(
+                "INSERT INTO transactions(user_id, amount, type, category, description, date) " +
+                "VALUES(?, ?, ?, ?, ?, ?)");
+        statement.setInt(1, currentUserId);
+        statement.setDouble(2, amount);
+        statement.setString(3, type);
+        statement.setString(4, category);
+        statement.setString(5, description);
+        statement.setString(6, dateFormat.format(new Date()));
+        statement.executeUpdate();
+        statement.close();
+    }
+
+    private static void viewTransactions() {
+        try {
+            PreparedStatement statement = connection.prepareStatement(
+                    "SELECT * FROM transactions WHERE user_id = ? ORDER BY date DESC");
+            statement.setInt(1, currentUserId);
+            ResultSet rs = statement.executeQuery();
+
+            System.out.println("\n=== Transaction History ===");
+            System.out.printf("%-20s %-10s %-10s %-15s %-30s %-20s\n", 
+                    "Date", "Type", "Amount", "Category", "Description", "Balance Impact");
+            System.out.println("-----------------------------------------------------------------------------------");
+
+            double balance = getCurrentBalance();
+            while (rs.next()) {
+                String date = rs.getString("date");
+                String type = rs.getString("type");
+                double amount = rs.getDouble("amount");
+                String category = rs.getString("category");
+                String description = rs.getString("description");
+                
+                String impact = type.equals("DEPOSIT") ? "+$" + amount : "-$" + amount;
+                System.out.printf("%-20s %-10s $%-9.2f %-15s %-30s %-20s\n", 
+                        date, type, amount, category, description, impact);
+            }
+            System.out.println("\nCurrent Balance: $" + balance);
+            rs.close();
+            statement.close();
+        } catch (SQLException e) {
+            System.out.println("Failed to retrieve transactions: " + e.getMessage());
+        }
+    }
+
+    private static double getCurrentBalance() throws SQLException {
+        PreparedStatement statement = connection.prepareStatement(
+                "SELECT balance FROM users WHERE id = ?");
+        statement.setInt(1, currentUserId);
+        ResultSet rs = statement.executeQuery();
+        double balance = 0;
+        if (rs.next()) {
+            balance = rs.getDouble("balance");
+        }
+        rs.close();
+        statement.close();
+        return balance;
+    }
+
+    private static void generateReport() {
+        System.out.println("\n=== Expense Report ===");
+        System.out.println("1. View by category");
+        System.out.println("2. View by date range");
+        System.out.print("Enter your choice: ");
+
+        try {
+            int choice = Integer.parseInt(scanner.nextLine());
+            switch (choice) {
+                case 1:
+                    generateCategoryReport();
+                    break;
+                case 2:
+                    generateDateRangeReport();
+                    break;
+                default:
+                    System.out.println("Invalid choice.");
+            }
+        } catch (NumberFormatException e) {
+            System.out.println("Please enter a valid number.");
+        }
+    }
+
+    private static void generateCategoryReport() {
+        try {
+            PreparedStatement statement = connection.prepareStatement(
+                    "SELECT category, SUM(amount) as total FROM transactions " +
+                    "WHERE user_id = ? AND type = 'EXPENSE' GROUP BY category");
+            statement.setInt(1, currentUserId);
+            ResultSet rs = statement.executeQuery();
+
+            System.out.println("\n=== Expenses by Category ===");
+            System.out.printf("%-20s %-10s\n", "Category", "Amount");
+            System.out.println("----------------------------");
+            
+            double grandTotal = 0;
+            while (rs.next()) {
+                String category = rs.getString("category");
+                double total = rs.getDouble("total");
+                grandTotal += total;
+                System.out.printf("%-20s $%-9.2f\n", category, total);
+            }
+            System.out.println("----------------------------");
+            System.out.printf("%-20s $%-9.2f\n", "Total Expenses", grandTotal);
+            rs.close();
+            statement.close();
+        } catch (SQLException e) {
+            System.out.println("Failed to generate report: " + e.getMessage());
+        }
+    }
+
+    private static void generateDateRangeReport() {
+        System.out.print("Enter start date (YYYY-MM-DD): ");
+        String startDate = scanner.nextLine() + " 00:00:00";
+        System.out.print("Enter end date (YYYY-MM-DD): ");
+        String endDate = scanner.nextLine() + " 23:59:59";
+
+        try {
+            PreparedStatement statement = connection.prepareStatement(
+                    "SELECT type, category, amount, description, date FROM transactions " +
+                    "WHERE user_id = ? AND date BETWEEN ? AND ? ORDER BY date");
+            statement.setInt(1, currentUserId);
+            statement.setString(2, startDate);
+            statement.setString(3, endDate);
+            ResultSet rs = statement.executeQuery();
+
+            System.out.println("\n=== Transactions from " + startDate.substring(0, 10) + 
+                             " to " + endDate.substring(0, 10) + " ===");
+            System.out.printf("%-12s %-15s %-10s %-30s %-20s\n", 
+                    "Type", "Category", "Amount", "Description", "Date");
+            System.out.println("--------------------------------------------------------------------");
+
+            double totalDeposits = 0;
+            double totalWithdrawals = 0;
+            double totalExpenses = 0;
+            
+            while (rs.next()) {
+                String type = rs.getString("type");
+                String category = rs.getString("category");
+                double amount = rs.getDouble("amount");
+                String description = rs.getString("description");
+                String date = rs.getString("date").substring(0, 16);
+                
+                System.out.printf("%-12s %-15s $%-9.2f %-30s %-20s\n", 
+                        type, category, amount, description, date);
+                
+                switch (type) {
+                    case "DEPOSIT": totalDeposits += amount; break;
+                    case "WITHDRAWAL": totalWithdrawals += amount; break;
+                    case "EXPENSE": totalExpenses += amount; break;
+                }
+            }
+            
+            System.out.println("\nSummary:");
+            System.out.printf("Total Deposits: $%.2f\n", totalDeposits);
+            System.out.printf("Total Withdrawals: $%.2f\n", totalWithdrawals);
+            System.out.printf("Total Expenses: $%.2f\n", totalExpenses);
+            System.out.printf("Net Change: $%.2f\n", 
+                    (totalDeposits - totalWithdrawals - totalExpenses));
+            
+            rs.close();
+            statement.close();
+        } catch (SQLException e) {
+            System.out.println("Failed to generate report: " + e.getMessage());
+        }
+    }
+
+    private static void logout() {
+        currentUserId = -1;
+        System.out.println("Logged out successfully.");
+    }
+
+    private static void exitApplication() {
+        try {
+            if (connection != null) {
+                connection.close();
+            }
+            System.out.println("Thank you for using our Banking Application!");
+        } catch (SQLException e) {
+            System.err.println("Error closing database connection: " + e.getMessage());
+        }
+    }
+}
